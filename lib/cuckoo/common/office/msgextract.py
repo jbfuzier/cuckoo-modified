@@ -27,7 +27,6 @@ __version__ = '0.2'
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 import os
 import sys
 import glob
@@ -36,7 +35,6 @@ from email.parser import Parser as EmailParser
 import email.utils
 import olefile as OleFile
 from lib.cuckoo.common.utils import store_temp_file
-
 def windowsUnicode(string):
     if string is None:
         return None
@@ -44,19 +42,26 @@ def windowsUnicode(string):
         return str(string, 'utf_16_le')
     else:  # Python 2
         return unicode(string, 'utf_16_le')
-
+INTERESTING_FILE_EXTENSIONS = [
+    '', '.bat', '.bin', '.cmd', '.com', '.cpl', '.dll', '.doc', '.docb', '.docm', '.docx', '.dot', '.dotm', '.dotx', '.exe', '.hta', '.htm', '.html',
+    '.jar', '.msc', '.msi', '.msp', '.mst', '.pdf', '.pif', '.pot', '.potm', '.potx', '.ppam', '.pps', '.ppsm', '.ppsx', '.ppt', '.pptm', '.pptx',
+    '.ps1', '.ps1xml', '.ps2', '.ps2xml', '.psc1', '.psc2', '.reg', '.rgs', '.scr', '.sct', '.shb', '.shs', '.sldm', '.sldx', '.vb', '.vba', '.vbe',
+    '.vbs', '.vbscript', '.ws', '.wsh', '.xla', '.xlam', '.xll', '.xlm', '.xls', '.xlsb', '.xlsm', '.xlsx', '.xlt', '.xltm', '.xltx', '.xlw', '.zip'
+]
 
 class Attachment:
     def __init__(self, msg, dir_):
+
         # Get long filename
-        self.longFilename = msg._getStringStream([dir_, '__substg1.0_3707'])
+        self.longFilename = msg._getStringStream(dir_ + ['__substg1.0_3707'])
 
         # Get short filename
-        self.shortFilename = msg._getStringStream([dir_, '__substg1.0_3704'])
+        self.shortFilename = msg._getStringStream(dir_ + ['__substg1.0_3704'])
 
         # Get attachment data
-        self.data = msg._getStream([dir_, '__substg1.0_37010102'])
+        self.data = msg._getStream(dir_ + ['__substg1.0_37010102'])
 
+        print "logfilename %s"%self.longFilename
     def save(self):
         # Use long filename as first preference
         filename = self.longFilename
@@ -76,7 +81,7 @@ class Attachment:
         ext = ext.lower()
         if ext == "" and len(basename) and basename[0] == ".":
             return None
-        extensions = ["", ".exe", ".dll", ".pdf", ".doc", ".ppt", ".pptx", ".docx", ".xls", ".msi", ".bin", ".scr", ".zip", ".htm", ".html"]
+        extensions = INTERESTING_FILE_EXTENSIONS
         foundext = False
         for theext in extensions:
             if ext == theext:
@@ -136,10 +141,24 @@ class Message(OleFile.OleFileIO):
         except Exception:
             # Get the attachments
             attachmentDirs = []
-
-            for dir_ in self.listdir():
-                if dir_[0].startswith('__attach') and dir_[0] not in attachmentDirs:
-                    attachmentDirs.append(dir_[0])
+            dirList = self.listdir()
+            """
+            The purpose is to get the most nested attachment dir in order to handle msgs inside msgs
+            In this case, the second message will be in an __attach in "__substg1.0_3701000D"
+                cf fig 3. https://msdn.microsoft.com/en-us/library/ee217698%28v=exchg.80%29.aspx
+            """
+            dirList = sorted(dirList,key=lambda dir: len(dir), reverse=True) # Used to gets the most nested attachment
+            for dir_ in dirList:
+                if dir_[0].startswith('__attach'):
+                    result = [dir_[0]]
+                    for d in dir_[1:]:
+                        if (d == "__substg1.0_3701000D") or (d.startswith('__attach')):
+                           result.append(d)
+                        else:
+                            break
+                    if len([d for d in [''.join(d) for d in attachmentDirs] if d.startswith("".join(result))]) == 0:
+                        # Reject if a more specific dir is known
+                        attachmentDirs.append(result)
 
             self._attachments = []
 
@@ -151,9 +170,10 @@ class Message(OleFile.OleFileIO):
     def get_extracted_attachments(self):
         retlist = []
         # Save the attachments
+        print "get_extracted_attachments"
         for attachment in self.attachments:
+            print attachment
             saved = attachment.save()
             if saved:
                 retlist.append(saved)
-
         return retlist
