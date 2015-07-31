@@ -15,14 +15,25 @@ from lib.cuckoo.common.config import Config
 from lib.cuckoo.common.objects import File
 from lib.cuckoo.common.email_utils import find_attachments_in_email
 from lib.cuckoo.common.office.msgextract import Message
+import logging
+log = logging.getLogger(__name__)
+INTERESTING_FILE_EXTENSIONS = [
+    '', '.bat', '.bin', '.cmd', '.com', '.cpl', '.dll', '.doc', '.docb', '.docm', '.docx', '.dot', '.dotm', '.dotx', '.exe', '.hta', '.htm', '.html',
+    '.jar', '.msc', '.msi', '.msp', '.mst', '.pdf', '.pif', '.pot', '.potm', '.potx', '.ppam', '.pps', '.ppsm', '.ppsx', '.ppt', '.pptm', '.pptx',
+    '.ps1', '.ps1xml', '.ps2', '.ps2xml', '.psc1', '.psc2', '.reg', '.rgs', '.scr', '.sct', '.shb', '.shs', '.sldm', '.sldx', '.vb', '.vba', '.vbe',
+    '.vbs', '.vbscript', '.ws', '.wsh', '.xla', '.xlam', '.xll', '.xlm', '.xls', '.xlsb', '.xlsm', '.xlsx', '.xlt', '.xltm', '.xltx', '.xlw', '.zip', '.msg'
+]
+
+KEEP_INTERMEDIATE_FILES = False # Move as a setting in config ?
 
 def demux_zip(filename, options):
     retlist = []
 
+    log.error("test")
     try:
         # don't try to extract from office docs
         magic = File(filename).get_type()
-        if "Microsoft" in magic or "Java Jar" in magic:
+        if "Microsoft" in magic or "Java Jar" in magic or "Composite Document File" in magic:
             return retlist
 
         extracted = []
@@ -46,16 +57,14 @@ def demux_zip(filename, options):
                 # ignore directories
                 if info.filename.endswith("/"):
                     continue
+                print info.filename
                 base, ext = os.path.splitext(info.filename)
                 basename = os.path.basename(info.filename)
                 ext = ext.lower()
                 if ext == "" and len(basename) and basename[0] == ".":
                     continue
-                extensions = ["", ".exe", ".dll", ".pdf", ".doc", ".ppt", ".pptx", ".docx", ".xls", ".msi", ".bin", ".scr"]
-                for theext in extensions:
-                    if ext == theext:
-                        extracted.append(info.filename)
-                        break
+                if ext in INTERESTING_FILE_EXTENSIONS:
+                    extracted.append(info.filename)
 
             options = Config()
             tmp_path = options.cuckoo.get("tmppath", "/tmp")
@@ -77,7 +86,7 @@ def demux_zip(filename, options):
 def demux_rar(filename, options):
     retlist = []
 
-    if not HAS_RARFILE:
+    if not HAS_RARFILE or not filename.endswith(".rar"):
         return retlist
 
     try:
@@ -115,12 +124,8 @@ def demux_rar(filename, options):
                 ext = ext.lower()
                 if ext == "" and len(basename) and basename[0] == ".":
                     continue
-                extensions = ["", ".exe", ".dll", ".pdf", ".doc", ".ppt", ".pptx", ".docx", ".xls", ".msi", ".bin", ".scr"]
-                for theext in extensions:
-                    if ext == theext:
-                        extracted.append(info.filename)
-                        break
-
+                if ext in INTERESTING_FILE_EXTENSIONS:
+                    extracted.append(info.filename)
             options = Config()
             tmp_path = options.cuckoo.get("tmppath", "/tmp")
             target_path = os.path.join(tmp_path, "cuckoo-rar-tmp")
@@ -142,9 +147,12 @@ def demux_rar(filename, options):
 
     return retlist
 
-
 def demux_email(filename, options):
     retlist = []
+
+    if not filename.endswith(".rar"):
+        return retlist
+
     try:
         with open(filename, "rb") as openfile:
             buf = openfile.read()
@@ -159,13 +167,15 @@ def demux_email(filename, options):
 
 def demux_msg(filename, options):
     retlist = []
+    if not filename.endswith(".msg"):
+        print "%s not endswith msg"%filename
+        return None
     try:
         retlist = Message(filename).get_extracted_attachments()
     except:
         pass
 
     return retlist
-
 
 def demux_sample(filename, package, options):
     """
@@ -175,35 +185,19 @@ def demux_sample(filename, package, options):
 
     # if a package was specified, then don't do anything special
     # this will allow for the ZIP package to be used to analyze binaries with included DLL dependencies
+    DEMUXERS = [demux_zip, demux_rar, demux_email, demux_msg] # demux functions are in charge of filtering files
     if package:
         return [ filename ]
 
-    retlist = demux_zip(filename, options)
-    if not retlist:
-        retlist = demux_rar(filename, options)
-    if not retlist:
-        retlist = demux_email(filename, options)
-    if not retlist:
-        retlist = demux_msg(filename, options)
-    # handle ZIPs/RARs inside extracted files
-    if retlist:
-        newretlist = []
-        for item in retlist:
-            zipext = demux_zip(item, options)
-            if zipext:
-                newretlist.extend(zipext)
-            else:
-                rarext = demux_rar(item, options)
-                if rarext:
-                    newretlist.extend(rarext)
-                else:
-                    newretlist.append(item)
-        retlist = newretlist
+    files = [{'filename': filename, 'options': options, 'origin': 'sample', 'has_children': False, 'processed': False}] # File submited
+    tmp_files = []
+    if not KEEP_INTERMEDIATE_FILES:
+        for f in files:
+            if f['has_children']:
+                files.remove(f)
 
-    # if it wasn't a ZIP or an email or we weren't able to obtain anything interesting from either, then just submit the
-    # original file
 
-    if not retlist:
-        retlist.append(filename)
+    filenames = [f['filename'] for f in files]
+    print filenames
+    return filenames
 
-    return retlist
