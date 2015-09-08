@@ -1,5 +1,5 @@
-#!/usr/bin/env python
-# Copyright (C) 2010-2015 Cuckoo Foundation, Accuvant, Inc. (bspengler@accuvant.com)
+﻿#!/usr/bin/env python
+# Copyright (C) 2010-2015 Cuckoo Foundation, Optiv, Inc. (brad.spengler@optiv.com)
 # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
 # See the file 'docs/LICENSE' for copying permission.
 
@@ -27,6 +27,8 @@ RESOLUTION = {
 
 INITIAL_HWNDS = []
 
+CLOSED_OFFICE = False
+
 def foreach_child(hwnd, lparam):
     # List of buttons labels to click.
     buttons = [
@@ -48,10 +50,12 @@ def foreach_child(hwnd, lparam):
         "later",
         "finish",
         "end",
+        "allow access",
     ]
 
     # List of buttons labels to not click.
     dontclick = [
+        "check online for a solution",
         "don't run",
         "do not ask again until the next update is available",
     ]
@@ -60,7 +64,7 @@ def foreach_child(hwnd, lparam):
     USER32.GetClassNameW(hwnd, classname, 128)
 
     # Check if the class of the child is button.
-    if "button" in classname.value.lower():
+    if "button" in classname.value.lower() or classname.value == "NUIDialog":
         # Get the text of the button.
         length = USER32.SendMessageW(hwnd, WM_GETTEXTLENGTH, 0, 0)
         if not length:
@@ -68,6 +72,14 @@ def foreach_child(hwnd, lparam):
         text = create_unicode_buffer(length + 1)
         USER32.SendMessageW(hwnd, WM_GETTEXT, length + 1, text)
         textval = text.value.replace('&','')
+        if classname.value == "NUIDialog" and "Microsoft" in textval:
+            log.info("Issuing keypress on Office dialog")
+            USER32.SetForegroundWindow(hwnd)
+            # enter key down/up
+            USER32.keybd_event(0x0d, 0x1c, 0, 0)
+            USER32.keybd_event(0x0d, 0x1c, 2, 0)
+            return False
+
         # Check if the button is set as "clickable" and click it.
         for button in buttons:
             if button in textval.lower():
@@ -90,6 +102,8 @@ def foreach_window(hwnd, lparam):
     # If the window is visible, enumerate its child objects, looking
     # for buttons.
     if USER32.IsWindowVisible(hwnd):
+        # we also want to inspect the "parent" windows, not just the children
+        foreach_child(hwnd, lparam)
         USER32.EnumChildWindows(hwnd, EnumChildProc(foreach_child), 0)
     return True
 
@@ -122,13 +136,15 @@ def click_mouse():
 
 # Callback procedure invoked for every enumerated window.
 def get_office_window(hwnd, lparam):
+    global CLOSED_OFFICE
     if USER32.IsWindowVisible(hwnd):
         text = create_unicode_buffer(1024)
         USER32.GetWindowTextW(hwnd, text, 1024)
         if "- Microsoft" in text.value:
             # send ALT+F4 equivalent
             log.info("Closing Office window.")
-            USER32.SendMessageW(hwnd, WM_CLOSE, None, None)
+            USER32.SendNotifyMessageW(hwnd, WM_CLOSE, None, None)
+            CLOSED_OFFICE = True
     return True
 
 class Human(Auxiliary, Thread):
@@ -141,11 +157,6 @@ class Human(Auxiliary, Thread):
 
     def stop(self):
         self.do_run = False
-
-    def worker(self):
-        while self.do_run:
-            USER32.EnumWindows(EnumWindowsProc(foreach_window), 0)
-            KERNEL32.Sleep(1000)
 
     def run(self):
         try:
@@ -168,13 +179,12 @@ class Human(Auxiliary, Thread):
             memmove(lockbuf, cliprawstr, sizeof(cliprawstr))
             KERNEL32.GlobalUnlock(buf)
             USER32.SetClipboardData(CF_TEXT, buf)
+            USER32.CloseClipboard()
 
             nohuman = self.options.get("nohuman")
             if nohuman:
                 return True
-            t = Thread(target = self.worker)
-            t.daemon = True
-            t.start()
+
             officedoc = False
             if hasattr(self.config, "file_type"):
                 file_type = self.config.file_type
@@ -183,7 +193,7 @@ class Human(Auxiliary, Thread):
                     "Microsoft Office Word" in file_type or file_name.endswith((".doc", ".docx", ".rtf")):
                     officedoc = True
                 elif "Microsoft Office Excel" in file_type or "Microsoft Excel" in file_type or \
-                    file_name.endswith((".xls", ".xlsx")):
+                    file_name.endswith((".xls", ".xlsx", ".xlsm", ".xlsb")):
                     officedoc = True
                 elif "Microsoft PowerPoint" in file_type or \
                     file_name.endswith((".ppt", ".pptx", ".pps", ".ppsx", ".pptm", ".potm", ".potx", ".ppsm")):
@@ -192,7 +202,7 @@ class Human(Auxiliary, Thread):
             USER32.EnumWindows(EnumWindowsProc(getwindowlist), 0)
 
             while self.do_run:
-                if officedoc and (seconds % 30) == 0:
+                if officedoc and (seconds % 30) == 0 and not CLOSED_OFFICE:
                     USER32.EnumWindows(EnumWindowsProc(get_office_window), 0)
 
                 # only move the mouse 50% of the time, as malware can choose to act on an "idle" system just as it can on an "active" system
@@ -209,6 +219,7 @@ class Human(Auxiliary, Thread):
                         pass
                     USER32.SetForegroundWindow(other_hwnds[random.randint(0, len(other_hwnds)-1)])
 
+                USER32.EnumWindows(EnumWindowsProc(foreach_window), 0)
                 KERNEL32.Sleep(1000)
                 seconds += 1
         except Exception as e:

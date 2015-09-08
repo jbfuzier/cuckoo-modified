@@ -1,4 +1,4 @@
-# Copyright (C) 2010-2015 Cuckoo Foundation, Accuvant, Inc. (bspengler@accuvant.com)
+# Copyright (C) 2010-2015 Cuckoo Foundation, Optiv, Inc. (brad.spengler@optiv.com)
 # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
 # See the file 'docs/LICENSE' for copying permission.
 
@@ -143,11 +143,12 @@ def pretty_print_retval(category, api_name, status, retval):
         return None
     val = None
     try:
-        val = long(retval, 16)
+        val = long(retval, 16) & 0xffffffff
     except ValueError:
         return None
     return {
             0x00000103 : "NO_MORE_ITEMS",
+            0x00002af9 : "WSAHOST_NOT_FOUND",
             0x80000005 : "BUFFER_OVERFLOW",
             0x80000006 : "NO_MORE_FILES",
             0xc0000001 : "UNSUCCESSFUL",
@@ -170,6 +171,8 @@ def pretty_print_retval(category, api_name, status, retval):
             0xc000003a : "OBJECT_PATH_NOT_FOUND",
             0xc000003c : "DATA_OVERRUN",
             0xc0000043 : "SHARING_VIOLATION",
+            0xc0000045 : "INVALID_PAGE_PROTECTION",
+            0xc000007a : "PROCEDURE_NOT_FOUND",
             0xc00000ba : "FILE_IS_A_DIRECTORY",
             0xc000010a : "PROCESS_IS_TERMINATING",
             0xc0000121 : "CANNOT_DELETE",
@@ -1385,6 +1388,7 @@ def get_vt_consensus(namelist):
         "risktool",
         "multi",
         "ransom",
+        "autoit",
     ]
 
     finaltoks = defaultdict(int)

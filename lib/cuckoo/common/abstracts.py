@@ -1,4 +1,4 @@
-# Copyright (C) 2010-2015 Cuckoo Foundation, Accuvant, Inc. (bspengler@accuvant.com).
+# Copyright (C) 2010-2015 Cuckoo Foundation, Optiv, Inc. (brad.spengler@optiv.com).
 # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
 # See the file 'docs/LICENSE' for copying permission.
 
@@ -150,7 +150,7 @@ class Machinery(object):
                                     resultserver_port=port)
             except (AttributeError, CuckooOperationalError) as e:
                 log.warning("Configuration details about machine %s "
-                            "are missing: %s", machine_id, e)
+                            "are missing: %s", machine.id, e)
                 continue
 
     def _initialize_check(self):
